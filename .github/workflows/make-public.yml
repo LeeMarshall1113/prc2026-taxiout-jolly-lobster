@@ -1,0 +1,81 @@
+# Makes this repository public once the deadline for the organisers' review has passed.
+#
+# The challenge organisers asked for the repository to be public soon after 2026-10-14 10:00 UTC. The visibility is changed
+# by this workflow so that nobody has to be at a computer. It runs on several scheduled times on 2026-10-14 (a scheduled run
+# can start late or be skipped, so there are several) and can be started by hand. It is safe to run more than once: if the
+# repository is already public it does nothing and succeeds.
+#
+# Needs one repository secret, REPO_ADMIN_TOKEN: a fine-grained personal access token limited to this repository with the
+# repository permission "Administration: Read and write". The default GITHUB_TOKEN cannot change visibility.
+#
+# Date guard: before NOT_BEFORE the workflow does nothing, also when started by hand, unless the manual run sets the input
+# "override" to "yes" (meant for a test on a throwaway repository only).
+name: make-public
+
+on:
+  schedule:
+    - cron: "15 10 14 10 *"
+    - cron: "45 10 14 10 *"
+    - cron: "15 11 14 10 *"
+    - cron: "15 12 14 10 *"
+    - cron: "15 14 14 10 *"
+    - cron: "15 18 14 10 *"
+    - cron: "15 22 14 10 *"
+  workflow_dispatch:
+    inputs:
+      override:
+        description: 'Type "yes" to skip the date guard (throwaway test repositories only)'
+        required: false
+        default: "no"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: make-public
+  cancel-in-progress: false
+
+env:
+  NOT_BEFORE: "2026-10-14T10:00:00Z"
+
+jobs:
+  make-public:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set the repository visibility to public
+        env:
+          REPO_ADMIN_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+          REPO: ${{ github.repository }}
+          OVERRIDE: ${{ github.event.inputs.override }}
+        run: |
+          set -euo pipefail
+          now=$(date -u +%s)
+          not_before=$(date -u -d "$NOT_BEFORE" +%s)
+          if [ "$now" -lt "$not_before" ] && [ "${OVERRIDE:-no}" != "yes" ]; then
+            echo "Before $NOT_BEFORE and no override: doing nothing."
+            exit 0
+          fi
+          if [ -z "${REPO_ADMIN_TOKEN:-}" ]; then
+            echo "::error::Secret REPO_ADMIN_TOKEN is not set; the visibility cannot be changed."
+            exit 1
+          fi
+          api="https://api.github.com/repos/$REPO"
+          hdr=(-H "Authorization: Bearer $REPO_ADMIN_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          code=$(curl -sS -o /tmp/repo.json -w "%{http_code}" "${hdr[@]}" "$api")
+          if [ "$code" != "200" ]; then
+            echo "::error::Could not read the repository (HTTP $code). Check that the token is valid and limited to this repository."
+            exit 1
+          fi
+          visibility=$(jq -r '.visibility' /tmp/repo.json)
+          if [ "$visibility" = "public" ]; then
+            echo "Already public: nothing to do."
+            exit 0
+          fi
+          echo "Visibility is '$visibility'; changing to public."
+          code=$(curl -sS -o /tmp/patch.json -w "%{http_code}" -X PATCH "${hdr[@]}" "$api" -d '{"visibility":"public"}')
+          if [ "$code" != "200" ]; then
+            echo "::error::Visibility change refused (HTTP $code): $(jq -r '.message // empty' /tmp/patch.json)"
+            exit 1
+          fi
+          echo "Visibility is now: $(jq -r '.visibility' /tmp/patch.json)"

@@ -1,0 +1,121 @@
+"""Kaggle kernel runner for the LTFM take-off-sequence bulk refit (tag "kg-ltfm", 2026-09-25). GENERATED per kernel by
+archive/agent_kg_ltfm_kaggle.py from this template; the CONFIG block is filled in. Private kernel, free CPU only.
+
+Reads the private dataset (flat file names, "__" = path separator), rebuilds the repo layout under /tmp, pins
+catboost/polars, runs ONE arm, and leaves only predictions + logs in /kaggle/working.
+"""
+import glob
+import json
+import os
+import resource
+import shutil
+import subprocess
+import sys
+import time
+
+# ---- CONFIG (filled in by the generator) ----
+TAG = "@TAG@"
+KIND = "@KIND@"          # fold | final
+SEQ = "@SEQ@"            # off | on | raw
+FOLD = "@FOLD@"          # fold id for KIND=fold
+EXTRA = @EXTRA@          # extra CLI args (list)
+EXPECT = @EXPECT@        # expected feature count
+PINS = @PINS@
+BASEDROP = "@BASEDROP@"
+COMMON = @COMMON@
+# ---------------------------------------------
+
+W = "/kaggle/working"
+T0 = time.time()
+LOG = open(f"{W}/{TAG}.log", "w", buffering=1)
+
+
+def say(*a):
+    s = " ".join(str(x) for x in a)
+    print(s, flush=True)
+    LOG.write(s + "\n")
+
+
+hits = glob.glob("/kaggle/input/**/prc__final.py", recursive=True)
+assert len(hits) == 1, hits
+SRC = os.path.dirname(hits[0])
+say("dataset dir:", SRC, "files:", len(os.listdir(SRC)))
+
+# ---- rebuild the repo layout ----
+REPO, DATA = "/tmp/repo", "/tmp/data"
+for d in (f"{REPO}/prc", f"{REPO}/scripts", f"{REPO}/results", f"{DATA}/raw/weather", f"{DATA}/interim", "/tmp/subs"):
+    os.makedirs(d, exist_ok=True)
+PREFIX = [("prc__", REPO, "prc"), ("scripts__", REPO, "archive"), ("raw__weather__", DATA, "raw/weather"),
+          ("raw__", DATA, "raw"), ("interim__", DATA, "interim")]   # first match wins; prc____init__.py -> prc/__init__.py
+for name in sorted(os.listdir(SRC)):
+    p = os.path.join(SRC, name)
+    for pre, root, sub in PREFIX:
+        if name.startswith(pre):
+            dst = os.path.join(root, sub, name[len(pre):])
+            if root == REPO:
+                shutil.copy(p, dst)
+            else:
+                os.symlink(p, dst)
+            break
+say("repo:", sorted(os.listdir(f"{REPO}/prc"))[:40])
+say("raw:", sorted(os.listdir(f"{DATA}/raw")), "weather:", len(os.listdir(f"{DATA}/raw/weather")))
+
+# ---- pins ----
+def ver(mod):
+    r = subprocess.run([sys.executable, "-c", f"import {mod}; print({mod}.__version__)"], capture_output=True, text=True)
+    return r.stdout.strip() or r.stderr.strip()[-200:]
+
+
+need = [p for p in PINS if ver(p.split("==")[0]) != p.split("==")[1]]
+if need:
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", *need], capture_output=True, text=True)
+    say("pip install", need, "rc", r.returncode, r.stdout[-800:], r.stderr[-1500:])
+VERS = {m: ver(m) for m in ("catboost", "polars", "numpy", "pandas", "pyarrow", "sklearn", "lightgbm")}
+VERS["python"] = sys.version.split()[0]
+say("versions:", VERS)
+say("nproc:", os.cpu_count(), open("/proc/meminfo").read().split("\n")[0])
+
+# ---- feature cache must match the shipped features.py (no rebuild on Kaggle) ----
+import hashlib  # noqa: E402
+dig = hashlib.sha256(open(f"{REPO}/prc/features.py", "rb").read()).hexdigest()[:16]
+stamp = open(f"{DATA}/interim/train_features.featurehash").read().strip()
+say("featurehash", dig, "cache", stamp)
+assert dig == stamp, "feature cache would rebuild -- refusing"
+
+env = {**os.environ, "PYTHONPATH": REPO, "PYTHONIOENCODING": "utf-8", "PRC_DATA_DIR": DATA,
+       "PRC_SUBMISSIONS_DIR": "/tmp/subs", "POLARS_UNKNOWN_EXTENSION_TYPE_BEHAVIOR": "load_as_storage",
+       "OMP_NUM_THREADS": "4", "POLARS_MAX_THREADS": "4"}
+if KIND == "fold":
+    cmd = [sys.executable, "-u", "archive/agent_ltfm_crossval.py", "--ltfm-seq", SEQ, "--tag", TAG, *COMMON,
+           "--folds", FOLD, "--drop", BASEDROP, *EXTRA]
+elif KIND == "final":
+    cmd = [sys.executable, "-u", "archive/agent_kg_ltfm_final.py", "--ltfm-seq", SEQ, "--out", f"{W}/preds_{TAG}.parquet",
+           "--basedrop", BASEDROP, *COMMON, *EXTRA]
+elif KIND == "bfold":
+    cmd = [sys.executable, "-u", "archive/agent_kg_bulkseq_crossval.py", "--seq", SEQ, "--tag", TAG, *COMMON,
+           "--folds", FOLD, "--drop", BASEDROP, *EXTRA]
+elif KIND == "bfinal":
+    cmd = [sys.executable, "-u", "archive/agent_kg_bulkseq_final.py", "--seq", SEQ, "--out", f"{W}/preds_{TAG}.parquet",
+           "--basedrop", BASEDROP, *COMMON, *EXTRA]
+else:
+    raise SystemExit(KIND)
+say("cmd:", " ".join(cmd))
+p = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+feat_line = None
+for line in p.stdout:
+    if "warning" in line.lower() or "deprecat" in line.lower():
+        continue
+    LOG.write(line)
+    if "features" in line and ("[" + TAG + "]" in line or " final]" in line):
+        feat_line = line.strip()
+rc = p.wait()
+peak_gb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024 / 1024
+say(f"rc={rc} seconds={time.time() - T0:.0f} peak_rss_child_gb={peak_gb:.2f}")
+say("feature line:", feat_line)
+for f in glob.glob(f"{REPO}/results/preds_{TAG}_*.parquet") + glob.glob(f"{REPO}/results/crossval.jsonl"):
+    shutil.copy(f, W)
+json.dump({"tag": TAG, "rc": rc, "seconds": round(time.time() - T0), "versions": VERS, "peak_rss_child_gb": peak_gb,
+           "feature_line": feat_line, "expect": EXPECT}, open(f"{W}/{TAG}_meta.json", "w"), indent=1)
+LOG.close()
+if rc:
+    raise SystemExit(rc)

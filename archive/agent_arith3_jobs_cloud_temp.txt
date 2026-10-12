@@ -1,0 +1,1 @@
+0-pw-s0-r0:temp:a:0,0-pw-s0-r0:temp:b:0,0-pw-s0-r0:temp:a:1,0-pw-s0-r0:temp:b:1,0-pw-s0-r0:temp:a:2,0-pw-s0-r0:temp:b:2,KYQGSR-pw-s0-r0:temp:a:0,KYQGSR-pw-s0-r0:temp:b:0,KYQGSR-pw-s0-r0:temp:a:1,KYQGSR-pw-s0-r0:temp:b:1,KYQGSR-pw-s0-r0:temp:a:2,KYQGSR-pw-s0-r0:temp:b:2

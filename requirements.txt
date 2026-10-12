@@ -1,0 +1,19 @@
+# Pinned after the first successful install — see docs/DATA-ACCESS.md for the
+# Python 3.14 wheel situation.
+numpy
+pandas
+pyarrow
+polars
+scikit-learn
+lightgbm
+catboost
+duckdb
+boto3
+requests
+
+# Also imported by parts of the pipeline (see docs/REPRODUCE.md section 1):
+scipy
+xgboost
+# Optional, for the Modal and Kaggle steps only:
+# modal
+# kaggle

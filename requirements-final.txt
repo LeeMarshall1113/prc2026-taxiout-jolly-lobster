@@ -1,0 +1,17 @@
+# Versions of the packages imported by final/ and prc/, from the environment the final pipeline was run in
+# (Python 3.14.0, Windows 11; `pip freeze` filtered to the imported packages). Install with:
+#     python -m pip install -r requirements-final.txt
+# Dependencies of these packages (for example polars-runtime-32 for polars) are resolved by pip.
+# Not listed because no stage of final/ needs them locally: the Modal client (modal/ apps; Python 3.13 images pin
+# numpy==2.5.2 lightgbm==4.7.0 polars==1.44.1) and the Kaggle client (Istanbul refits, see docs/REPRODUCE.md).
+numpy==2.5.2
+pandas==3.0.5
+polars==1.44.1
+pyarrow==25.0.1
+scikit-learn==1.9.0
+scipy==1.18.1         # lineage scripts that final/ copies from (calibration and blend helpers)
+lightgbm==4.7.0
+catboost==1.2.10
+xgboost-cpu==3.4.1   # prc/members.py only (an optional member)
+boto3==1.43.88       # prc/data.py, the organisers' bucket
+requests==2.34.2
